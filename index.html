@@ -974,21 +974,122 @@ ADD ACTIONS (put after your reply):
 Keep replies short, punchy, ADHD-friendly. Use bullet points for lists. Celebrate wins. Be direct.`;
   const msgs=chatMsgs.map(m=>({role:m.role==='ai'||m.role==='sys'?'assistant':'user',content:m.text}));
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json','anthropic-version':'2023-06-01','anthropic-dangerous-direct-browser-access':'true'},body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:1000,system:sys,messages:msgs})});
-    const data=await res.json();
-    let reply=data.content?.map(c=>c.text||'').join('')||'Error.';
-    const acts=[...reply.matchAll(/<ACTION>(.*?)<\/ACTION>/gs)].map(m=>{try{return JSON.parse(m[1]);}catch(e){return null;}}).filter(Boolean);
-    chatMsgs.push({role:'ai',text:reply.replace(/<ACTION>.*?<\/ACTION>/gs,'').trim()});
-    acts.forEach(act=>{try{
-      if(act.type==='add_calendar_event'){S.calEvents.push({id:Date.now()+Math.random(),title:act.title,date:act.date||new Date().toISOString().split('T')[0],hour:Number(act.hour)||9,notes:act.notes||'',color:act.color||'#8B7FE8',linkedId:null,linkedType:null,linkedName:null});chatMsgs.push({role:'sys',text:'📅 Added to calendar: "'+act.title+'"'});}
-      else if(act.type==='add_garden_job'){S.gardenJobs.push({id:Date.now()+Math.random(),name:act.name,contact:act.contact||'',address:act.address||'',stage:act.stage||'quote',amount:act.amount||'',date:act.date||'',notes:act.notes||'',tasks:[]});chatMsgs.push({role:'sys',text:'🌿 Garden job added: "'+act.name+'"'});}
-      else if(act.type==='add_design_client'){S.designClients.push({id:Date.now()+Math.random(),name:act.name,contact:act.contact||'',status:act.status||'todo',notes:act.notes||'',tasks:[]});chatMsgs.push({role:'sys',text:'🎨 Client added: "'+act.name+'"'});}
-      else if(act.type==='add_habit'){S.habits.push({id:Date.now()+Math.random(),name:act.name,icon:act.icon||'⚡',streak:0,done:false});chatMsgs.push({role:'sys',text:'✅ Habit added: "'+act.name+'"'});}
-      else if(act.type==='add_goal'){S.goals.push({id:Date.now()+Math.random(),cat:act.cat,text:act.text,progress:0,color:act.color||'#8B7FE8',tasks:[]});chatMsgs.push({role:'sys',text:'🎯 Goal added: "'+act.text+'"'});}
-      else if(act.type==='add_task'){S.tasks.push({id:Date.now()+Math.random(),name:act.name,priority:act.priority||'medium',deadline:act.deadline||'',notes:act.notes||'',done:false});chatMsgs.push({role:'sys',text:'📋 Task added: "'+act.name+'"'});}
-      save();
-    }catch(e){}});
-  }catch(e){chatMsgs.push({role:'ai',text:'Connection error — try again.'});}
+    // Smart local coach — understands commands and acts on them directly
+    const t=text.toLowerCase();
+    let handled=false;
+    let reply='';
+
+    // ADD CALENDAR EVENT
+    const calMatch=t.match(/(?:add|schedule|book|put).{0,30}(?:on|for|at)\s+([a-z]+day|tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday).{0,20}(?:at\s+(\d+)(?:am|pm)?)?/i);
+    const titleMatch=text.match(/(?:add|schedule|book)\s+(?:a\s+)?(.+?)(?:\s+(?:on|for|at|to)\s+|$)/i);
+
+    if(t.includes('add') || t.includes('schedule') || t.includes('book') || t.includes('create') || t.includes('new')){
+      // Garden job
+      if(t.includes('garden') || t.includes('job') || t.includes('lawn') || t.includes('landscap')){
+        const nameMatch=text.match(/(?:for|job for|called)\s+([A-Z][^,\.]+)/i);
+        const name=nameMatch?nameMatch[1].trim():'New Garden Job';
+        S.gardenJobs.push({id:Date.now(),name,contact:'',address:'',stage:'quote',amount:'',date:'',notes:text,tasks:[]});
+        save();chatMsgs.push({role:'sys',text:'🌿 Garden job added: "'+name+'" — check Garden tab to add details'});
+        reply="Done! I've added "+name+" as a garden job. Head to the Business tab to fill in the details like contact, address and amount.";
+        handled=true;
+      }
+      // Design client
+      else if(t.includes('client') || t.includes('design') || t.includes('graphic')){
+        const nameMatch=text.match(/(?:client|for)\s+([A-Z][^,\.]+)/i);
+        const name=nameMatch?nameMatch[1].trim():'New Client';
+        S.designClients.push({id:Date.now(),name,contact:'',status:'todo',notes:text,tasks:[]});
+        save();chatMsgs.push({role:'sys',text:'🎨 Client added: "'+name+'"'});
+        reply="Added "+name+" as a design client. Go to Business → Design to add their contact and project details.";
+        handled=true;
+      }
+      // Task
+      else if(t.includes('task') || t.includes('todo') || t.includes('remind') || t.includes('need to')){
+        const nameMatch=text.match(/(?:task|todo|remind me to|need to)\s+(?:to\s+)?(.+?)(?:\s+by\s+|$)/i);
+        const name=nameMatch?nameMatch[1].trim():text;
+        const pri=t.includes('urgent')||t.includes('asap')?'urgent':t.includes('important')||t.includes('high')?'high':'medium';
+        S.tasks.push({id:Date.now(),name,priority:pri,deadline:'',notes:'',done:false});
+        save();chatMsgs.push({role:'sys',text:'📋 Task added: "'+name+'"'});
+        reply="Task added: \""+name+"\" — go to Tasks tab to set a deadline.";
+        handled=true;
+      }
+      // Habit
+      else if(t.includes('habit')){
+        const nameMatch=text.match(/habit\s+(?:to\s+|of\s+)?(.+?)(?:\s*$)/i);
+        const name=nameMatch?nameMatch[1].trim():'New Habit';
+        S.habits.push({id:Date.now(),name,icon:'⚡',streak:0,done:false});
+        save();chatMsgs.push({role:'sys',text:'✅ Habit added: "'+name+'"'});
+        reply="Habit added: \""+name+"\" — you'll see it on your Today tab from tomorrow morning.";
+        handled=true;
+      }
+      // Calendar event
+      else if(t.includes('calendar') || t.includes('meeting') || t.includes('appointment') || t.includes('call') || calMatch){
+        const days={monday:1,tuesday:2,wednesday:3,thursday:4,friday:5,saturday:6,sunday:0};
+        const today=new Date();
+        let eventDate=today.toISOString().split('T')[0];
+        for(const [d,n] of Object.entries(days)){
+          if(t.includes(d)){
+            const diff=(n-today.getDay()+7)%7||7;
+            const nd=new Date(today);nd.setDate(today.getDate()+diff);
+            eventDate=nd.toISOString().split('T')[0];break;
+          }
+        }
+        if(t.includes('tomorrow')){const nd=new Date(today);nd.setDate(today.getDate()+1);eventDate=nd.toISOString().split('T')[0];}
+        const hourMatch=text.match(/(\d+)\s*(?:am|pm)/i);
+        let hour=9;
+        if(hourMatch){hour=parseInt(hourMatch[1]);if(text.toLowerCase().includes('pm')&&hour<12)hour+=12;}
+        const titleM=text.match(/(?:add|schedule|book)\s+(?:a\s+)?(.+?)(?:\s+(?:on|for|at|to the calendar))/i);
+        const title=titleM?titleM[1].trim():text.slice(0,40);
+        S.calEvents.push({id:Date.now(),title,date:eventDate,hour,notes:'',color:'#8B7FE8',linkedId:null,linkedType:null,linkedName:null});
+        save();chatMsgs.push({role:'sys',text:'📅 Added to calendar: "'+title+'" on '+eventDate+' at '+hour+':00'});
+        reply="Done! \""+title+"\" added to your calendar. Check the Calendar tab to confirm the time looks right.";
+        handled=true;
+      }
+    }
+
+    // STATUS / GENERAL QUESTIONS
+    if(!handled){
+      const done=S.habits.filter(h=>h.done).length,tot=S.habits.length;
+      const overdue=S.tasks.filter(t=>!t.done&&t.deadline&&new Date(t.deadline)<new Date()).length;
+      const wd=S.workoutDay||1;
+
+      if(t.includes('how am i') || t.includes('status') || t.includes('doing') || t.includes('everything okay') || t.includes('working fine') || t.includes("what's") || t.includes('whats')){
+        reply="Here's your status 👊\n\n"+
+          "Habits: "+done+"/"+tot+" done today\n"+
+          "Overdue tasks: "+(overdue||'none — you\'re on top of it!')+"\n"+
+          "Workout: Day "+wd+" of your 7-day shred\n"+
+          "Garden jobs: "+S.gardenJobs.length+" active\n"+
+          "Design clients: "+S.designClients.length+" active\n\n"+
+          (done===tot&&tot>0?"🏆 All habits done — smashing it!":(done>0?"Keep pushing — "+done+" habits done so far.":"Get moving — no habits ticked yet today!"));
+        handled=true;
+      }
+      else if(t.includes('workout') || t.includes('exercise') || t.includes('train') || t.includes('gym')){
+        const wp=WORKOUT_PLAN.find(p=>p.day===wd);
+        reply="Today is Day "+wd+" of your shred plan: "+wp.name+"\n\nFocus: "+wp.focus+"\n\nHead to the 💪 Fitness tab to see the full routine. Remember — broken finger means neutral grip where needed. You've got this! 🔥";
+        handled=true;
+      }
+      else if(t.includes('eat') || t.includes('food') || t.includes('meal') || t.includes('hungry')){
+        reply="For your shred this week:\n\n🍳 Breakfast: Eggs + sourdough + avocado (add salmon for more protein)\n🌯 Lunch: Chicken wrap or chilli con carne + sweet potato\n🍽️ Dinner: Grilled chicken + sweet potato + salad\n\nHit 150g+ protein today, drink 3L water, and avoid alcohol. Check the Fitness tab for full meal options!";
+        handled=true;
+      }
+      else if(t.includes('motivat') || t.includes('push') || t.includes('help') || t.includes('focus') || t.includes('adh')){
+        const msgs=["You've built a proper system. Now just work the system — one task at a time.","ADHD means you work in bursts. Pick ONE thing right now and do it for 25 minutes. Just one.","You've got "+S.gardenJobs.length+" garden jobs and "+S.designClients.length+" design clients. That's real momentum. Don't stop now.","Holiday is in a week. Every workout, every meal, every tick counts. Go.","The app is built. The plan is set. The only variable is you showing up. Go do the next thing."];
+        reply=msgs[Math.floor(Math.random()*msgs.length)];
+        handled=true;
+      }
+      else if(t.includes('plan') || t.includes('today') || t.includes('day')){
+        const todayEvs=S.calEvents.filter(e=>new Date(e.date).toDateString()===new Date().toDateString());
+        const urgentTasks=S.tasks.filter(t=>!t.done&&t.priority==='urgent').slice(0,2);
+        const wp=WORKOUT_PLAN.find(p=>p.day===wd);
+        reply="Your plan for today:\n\n"+(urgentTasks.length?"🚨 Urgent: "+urgentTasks.map(t=>t.name).join(', ')+"\n\n":"")+"💪 Workout: Day "+wd+" — "+wp.name+"\n"+(todayEvs.length?"📅 Calendar: "+todayEvs.map(e=>fmtH(e.hour)+' '+e.title).join(', ')+"\n":"")+"\nHabits left: "+(S.habits.length-S.habits.filter(h=>h.done).length)+" to tick off.\n\nStart with the hardest thing first. Go!";
+        handled=true;
+      }
+      else{
+        reply="Got it! To add things say:\n• \"Add a garden job for [name]\"\n• \"Add a task to [do something]\"\n• \"Schedule a meeting on Friday at 2pm\"\n• \"Add a habit to [habit name]\"\n\nOr ask me: \"Plan my day\", \"What should I eat?\", \"Motivate me\"";
+      }
+    }
+
+    chatMsgs.push({role:'ai',text:reply});
+  }catch(e){chatMsgs.push({role:'ai',text:'Something went wrong — try again.'});}
   chatLoading=false;rCoach();
 }
 </script>
